@@ -1,3 +1,22 @@
+/*
+il processo padre per comunicare con il processo figlio prepara:
+- una pipe
+- una memory map condivisa
+il processo padre manda i dati al processo figlio attraverso la pipe
+il processo figlio restituisce il risultato attraverso la memory map convidisa
+(che può essere anonima o basata su file).
+esempio:
+https://github.com/marcotessarotto/exOpSys/blob/7ce5b8f75782f2de0cb7f65bb7ce62dd143220e6/010files/mmap_anon.c#L18
+il processo padre prende come argomento a linea di comando un nome di file.
+il processo padre legge il file e manda i contenuti attraverso la pipe al processo figlio.
+il processo figlio riceve attraverso la pipe i contenuti del file e calcola SHA3_512.
+quando la pipe raggiunge EOF, il processo figlio produce il digest di SHA3_512 e
+lo scrive nella memory map condivisa, poi il processo figlio termina.
+quando al processo padre viene notificato che il processo figlio ha terminato,
+prende il digest dalla memory map condivisa e lo scrive a video
+("SHA3_512 del file %s è il seguente: " <segue digest in formato esadecimale>).
+ */
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,42 +32,13 @@
 
 #include <openssl/evp.h>
 
-/*
- *
-il processo padre per comunicare con il processo figlio prepara:
-- una pipe
-- una memory map condivisa
-
-il processo padre manda i dati al processo figlio attraverso la pipe
-
-il processo figlio restituisce il risultato attraverso la memory map convidisa
-(che può essere anonima o basata su file).
-esempio:
-https://github.com/marcotessarotto/exOpSys/blob/7ce5b8f75782f2de0cb7f65bb7ce62dd143220e6/010files/mmap_anon.c#L18
-
-il processo padre prende come argomento a linea di comando un nome di file.
-il processo padre legge il file e manda i contenuti attraverso la pipe al processo figlio.
-
-il processo figlio riceve attraverso la pipe i contenuti del file e calcola SHA3_512.
-
-quando la pipe raggiunge EOF, il processo figlio produce il digest di SHA3_512 e
-lo scrive nella memory map condivisa, poi il processo figlio termina.
-
-quando al processo padre viene notificato che il processo figlio ha terminato,
-prende il digest dalla memory map condivisa e lo scrive a video
-("SHA3_512 del file %s è il seguente: " <segue digest in formato esadecimale>).
- */
-
 
 #define HANDLE_ERROR(msg) { fprintf(stderr, "%s\n", msg); exit(EXIT_FAILURE); }
 #define HANDLE_ERROR2(msg, mdctx) { fprintf(stderr, "%s\n", msg); EVP_MD_CTX_destroy(mdctx); exit(EXIT_FAILURE); }
-
-
 #define CHECK_ERR(a,msg) {if ((a) == -1) { perror((msg)); exit(EXIT_FAILURE); } }
-
 #define CHECK_ALLOC(a,msg) {if ((a) == NULL) { perror((msg)); exit(EXIT_FAILURE); } }
-
 #define CHECK_ERR_MMAP(a,msg) {if ((a) == MAP_FAILED) { perror((msg)); exit(EXIT_FAILURE); } }
+
 
 #define BUF_SIZE 4096
 #define CHILD_PROC_RESULT_SIZE 64
@@ -56,12 +46,11 @@ prende il digest dalla memory map condivisa e lo scrive a video
 void child_process(void);
 
 int pipe_fd[2];
-char * child_proc_result; // memory map per il risultato
-char * buffer; // è usata da entrambi i processi
+char * child_proc_result;
+char * buffer;
 
 int main(int argc, char * argv[]) {
 	int res;
-
 	char * file_name;
 	int fd;
 
@@ -96,12 +85,9 @@ int main(int argc, char * argv[]) {
 		default:
 			;
 	}
-
-	close(pipe_fd[0]); // chiudiamo l'estremità di lettura della pipe
-
+	close(pipe_fd[0]);
 	fd = open(file_name, O_RDONLY);
 	CHECK_ERR(fd, "open")
-
 
 	while ((res = read(fd, buffer, BUF_SIZE)) > 0) {
 		res = write(pipe_fd[1], buffer, res);
@@ -109,11 +95,10 @@ int main(int argc, char * argv[]) {
 	}
 	CHECK_ERR(res, "read")
 
-	close(pipe_fd[1]); // chiudiamo l'estremità di scrittura della pipe
-
+	close(pipe_fd[1]);
 	close(fd);
 
-	res = wait(NULL); // aspetto la conclusione del processo figlio
+	res = wait(NULL);
 	CHECK_ERR(res, "wait")
 
 	printf("SHA3_512 del file %s è il seguente:\n", file_name);
@@ -127,14 +112,13 @@ int main(int argc, char * argv[]) {
 
 
 void child_process(void) {
-
 	EVP_MD_CTX * mdctx;
 	unsigned char * digest;
 	unsigned int digest_len;
 	EVP_MD * algo = NULL;
 	int res;
 
-	close(pipe_fd[1]); // chiudiamo l'estremità di scrittura della pipe
+	close(pipe_fd[1]);
 
 	algo = EVP_sha3_512();
 
@@ -158,7 +142,6 @@ void child_process(void) {
 
 	close(pipe_fd[0]);
 
-
 	digest_len = EVP_MD_size(algo); // sha3_512 returns a 512 bit hash
 
 	if ((digest = (unsigned char *)OPENSSL_malloc(digest_len)) == NULL) {
@@ -175,6 +158,4 @@ void child_process(void) {
 
 	OPENSSL_free(digest);
 	EVP_MD_CTX_destroy(mdctx);
-
-
 }
